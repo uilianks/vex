@@ -420,3 +420,22 @@ test("trace decodes premultiplied pixels back to straight color", async () => {
     for (const [i, v] of [0xc8, 0x64, 0x32].entries()) assert.ok(Math.abs(img.rgba[i] - v) <= 2, `channel ${i}`);
   } finally { rmSync(dir, { recursive: true }); }
 });
+
+test("--godot writes SpriteFrames beside strips and sheets at each scale; previews are .gdignored", () => {
+  const dir = mkdtempSync(join(tmpdir(), "vex-gd-"));
+  try {
+    const src = `sprite("dot", { w: 10, h: 6 }, circle(5, 3, 3, "6"))
+anim("pulse", { w: 8, h: 8, frames: 3, fps: 10 }, (f) => circle(4, 4, 2 + f.i, "4"))
+sheet("atlas", ["dot", "pulse"], { pad: 1 })`;
+    const r = writeOutputs(loadSource(src), dir, { scales: [1, 2], godot: true });
+    assert.deepEqual(r.errors, []);
+    assert.ok(existsSync(join(dir, "_preview", ".gdignore")));
+    const strip = readFileSync(join(dir, "anims", "pulse@2x.tres"), "utf8");
+    assert.match(strip, /path="pulse@2x.png"/);
+    assert.match(strip, /region = Rect2\(16, 0, 16, 16\)/);
+    assert.match(strip, /"loop": true,\n"name": &"pulse",\n"speed": 10\n/);
+    const atlas = readFileSync(join(dir, "atlas.tres"), "utf8");
+    assert.match(atlas, /"name": &"dot"/);
+    assert.equal((atlas.match(/AtlasTexture/g) ?? []).length, 4);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

@@ -33,6 +33,12 @@ export interface InkOpts {
   light?: number;
   /** 0..1: how much heavier the shadow side is. */
   weight?: number;
+  /**
+   * Brush pressure along the line: widths (0..1 of `w`) spread evenly from start to end and
+   * interpolated (`[0.2, 1, 0.4]` swells in the middle), or "bend": heavier where the line turns,
+   * as a brush slows into a curve and flicks out of the straights.
+   */
+  pressure?: number[] | "bend";
   seed?: number;
 }
 
@@ -63,7 +69,32 @@ export interface HatchOpts {
   cross?: boolean;
 }
 
-export const INK_KEYS = ["c", "w", "vary", "taper", "wobble", "dry", "light", "weight", "seed"];
+export interface ToneOpts {
+  /** Dot color. */
+  c: string;
+  /** Distance between dot centres in units (default 4). */
+  gap?: number;
+  /** Dot diameter as a fraction of the gap, 0..1.4 (default 0.55; above 1 the dots merge). */
+  dot?: number;
+  /** Screen angle in degrees (default 45). */
+  angle?: number;
+  opacity?: number;
+  /** Gradient tone: the dots shrink to nothing toward this side (degrees, 0 = up, clockwise). */
+  fade?: number;
+}
+
+export interface SpotOpts {
+  /** Spot color (default "k" when the palette has it, else black). */
+  c?: string;
+  /** Light direction, degrees (default: shade's light, else 315). */
+  light?: number;
+  /** How far the black reaches in from the far edge, as a fraction of the shape's extent along the light (default 0.3). */
+  depth?: number;
+}
+
+export const INK_KEYS = ["c", "w", "vary", "taper", "wobble", "dry", "light", "weight", "pressure", "seed"];
+export const TONE_KEYS = ["c", "gap", "dot", "angle", "opacity", "fade"];
+export const SPOT_KEYS = ["c", "light", "depth"];
 export const SHADE_KEYS = ["c", "light", "depth", "soft", "hi", "rim", "brush"];
 export const HATCH_KEYS = ["c", "angle", "gap", "w", "opacity", "cross"];
 
@@ -220,7 +251,7 @@ export function outline(s: ShapeNode): Poly[] {
     case "ellipse": return [{ pts: ellipsePts(a.cx, a.cy, a.rx, a.ry), closed: true }];
     case "rect": return [{ pts: roundRect(a.x, a.y, a.width, a.height, a.rx ?? 0), closed: true }];
     case "path": return flattenD(String(s.attrs.d));
-    default: throw new VexError(`ink, shade and hatch work on shapes, not ${s.tag}`);
+    default: throw new VexError(`ink, shade, hatch, tone and spot work on shapes, not ${s.tag}`);
   }
 }
 
@@ -337,8 +368,9 @@ export function inkD(lines: Line[], o: InkOpts, seed: number): string {
     const press = noise1(seed + 977 + k * 13, l.len, 18, l.closed);
     // outward normals for closed lines, whatever their winding
     const out = l.closed && area(l.pts) < 0 ? -1 : 1;
+    const brush = pressureAt(l, o.pressure);
     const half = l.pts.map((_, i) => {
-      let f = 1 + vary * press(l.s[i]);
+      let f = (1 + vary * press(l.s[i])) * brush(i);
       if (l.closed) f *= 1 - weight * out * (nm[i][0] * L[0] + nm[i][1] * L[1]);
       else if (taper > 0) {
         const e = Math.min(l.s[i], l.len - l.s[i]) / (taper * l.len / 2 || 1);
@@ -351,5 +383,105 @@ export function inkD(lines: Line[], o: InkOpts, seed: number): string {
     // closed: outer ring forward, inner ring backward, so nonzero fills only the band
     d += l.closed ? relD(left, true) + relD(right, true) : relD([...left, ...right], true);
   });
+  return d;
+}
+
+/** Pressure multiplier (0..1) per resampled point of a line. */
+function pressureAt(l: Line, p: InkOpts["pressure"]): (i: number) => number {
+  if (p === undefined) return () => 1;
+  if (p === "bend") {
+    // turn angle over a short window, normalised: a quarter turn within ~12 units is full pressure
+    const m = l.pts.length, k = 3;
+    const at = (i: number) => l.pts[l.closed ? ((i % m) + m) % m : Math.max(0, Math.min(m - 1, i))];
+    const turn = l.pts.map((_, i) => {
+      const a = at(i - k), b = at(i), c = at(i + k);
+      const t = Math.abs(Math.atan2((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]), (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1])));
+      return Math.min(1, t / (Math.PI / 4));
+    });
+    return (i) => 0.35 + 0.65 * turn[i];
+  }
+  const v = p.map((x) => Math.max(0, x));
+  if (v.length === 1) return () => v[0];
+  return (i) => {
+    const x = (l.s[i] / (l.len || 1)) * (v.length - 1), j = Math.min(v.length - 2, Math.floor(x)), f = x - j;
+    return v[j] + (v[j + 1] - v[j]) * f;
+  };
+}
+
+// ------------------------------------------------------------------ comic: tone and speed lines
+
+const circleD = (x: number, y: number, r: number) => `M${n(x - r)} ${n(y)}a${n(r)} ${n(r)} 0 1 0 ${n(2 * r)} 0a${n(r)} ${n(r)} 0 1 0 ${n(-2 * r)} 0`;
+
+/**
+ * A gradient screentone as geometry: dots on the screen lattice over the box, shrinking to nothing
+ * toward `fade`. (A flat tone is an SVG pattern; dots of changing size have to be drawn.)
+ */
+export function toneFadeD(b: { x: number; y: number; w: number; h: number }, o: ToneOpts): string {
+  const gap = o.gap ?? 4, r0 = ((o.dot ?? 0.55) * gap) / 2, a = ((o.angle ?? 45) * Math.PI) / 180;
+  const ux: P = [Math.cos(a), Math.sin(a)], uy: P = [-Math.sin(a), Math.cos(a)];
+  const F = lightDir(o.fade ?? 0);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2, R = Math.hypot(b.w, b.h) / 2 + gap;
+  // projection of the box corners on the fade direction: 0 on the far side, 1 at the fading edge
+  const proj = (x: number, y: number) => (x - cx) * F[0] + (y - cy) * F[1];
+  const ext = Math.abs(F[0]) * b.w / 2 + Math.abs(F[1]) * b.h / 2 || 1;
+  const k = Math.ceil(R / gap);
+  if ((2 * k + 1) ** 2 > 250000) throw new VexError(`tone fade: ${(2 * k + 1) ** 2} dots; use a larger gap for a shape this size`);
+  let d = "";
+  for (let i = -k; i <= k; i++) for (let j = -k; j <= k; j++) {
+    const x = cx + (i * ux[0] + j * uy[0]) * gap, y = cy + (i * ux[1] + j * uy[1]) * gap;
+    if (x < b.x - gap || x > b.x + b.w + gap || y < b.y - gap || y > b.y + b.h + gap) continue;
+    const t = (proj(x, y) / ext + 1) / 2, r = r0 * (1 - Math.max(0, Math.min(1, t)));
+    if (r > 0.12) d += circleD(x, y, r);
+  }
+  return d;
+}
+
+export interface SpeedOpts {
+  /** The area the lines fill: [x, y, w, h]. */
+  area: [number, number, number, number];
+  /** Radial (focus) lines converge on this point. */
+  at?: [number, number];
+  /** Parallel (motion) lines run in this direction, degrees (0 = right, 90 = down). */
+  angle?: number;
+  count?: number;
+  /** Widest width of a line in units. */
+  w?: number;
+  /** Radial: share of the distance to the nearest edge kept clear around `at` (0..1). */
+  inner?: number;
+  /** Line length as a fraction of the area's extent: [min, max]. */
+  length?: [number, number];
+  seed?: number;
+}
+
+/** Speed lines as filled tapered wedges: radial focus lines or parallel motion lines. */
+export function speedLinesD(o: SpeedOpts): string {
+  const [x, y, w, h] = o.area, r = rng(o.seed ?? 1), count = o.count ?? 60, lw = o.w ?? 3;
+  const [l0, l1] = o.length ?? (o.at ? [0.5, 1] : [0.25, 0.7]);
+  const wedge = (bx: number, by: number, tx: number, ty: number, half: number): string => {
+    const dx = tx - bx, dy = ty - by, m = Math.hypot(dx, dy) || 1, nx = -dy / m * half, ny = dx / m * half;
+    return `M${n(bx + nx)} ${n(by + ny)}L${n(tx)} ${n(ty)}L${n(bx - nx)} ${n(by - ny)}Z`;
+  };
+  let d = "";
+  if (o.at) {
+    const [cx, cy] = o.at, far = Math.hypot(Math.max(cx - x, x + w - cx), Math.max(cy - y, y + h - cy)) + lw;
+    const near = Math.min(cx - x, x + w - cx, cy - y, y + h - cy);
+    const clear = Math.max(0, near) * (o.inner ?? 0.45);
+    for (let i = 0; i < count; i++) {
+      const a = ((i + r() * 0.8) / count) * 2 * Math.PI, len = (far - clear) * (l0 + (l1 - l0) * r());
+      const tip = far - len, c = Math.cos(a), s = Math.sin(a);
+      d += wedge(cx + c * far, cy + s * far, cx + c * Math.max(clear, tip), cy + s * Math.max(clear, tip), (lw / 2) * (0.35 + 0.65 * r()));
+    }
+  } else {
+    const a = ((o.angle ?? 0) * Math.PI) / 180, ux = Math.cos(a), uy = Math.sin(a);
+    const ext = Math.abs(ux) * w + Math.abs(uy) * h, span = Math.abs(uy) * w + Math.abs(ux) * h;
+    const cx = x + w / 2, cy = y + h / 2;
+    for (let i = 0; i < count; i++) {
+      const off = ((i + r()) / count - 0.5) * span, len = ext * (l0 + (l1 - l0) * r());
+      const along = (r() - 0.5) * (ext - len) ;
+      // the head (wide) leads in the direction of motion; the tail thins to a point behind it
+      const hx = cx - uy * off + ux * (along + len / 2), hy = cy + ux * off + uy * (along + len / 2);
+      d += wedge(hx, hy, hx - ux * len, hy - uy * len, (lw / 2) * (0.3 + 0.7 * r()));
+    }
+  }
   return d;
 }

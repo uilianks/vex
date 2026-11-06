@@ -145,6 +145,94 @@ anim("slime_hop", { w: 36, h: 42, frames: 8, fps: 10 },
 sheet("enemies", ["slime*", "slime_hop"], { scale: 2 })
 ```
 
+## Examples
+
+Built by `npm run examples` from the files in [`examples/`](examples); the images are written to
+[`docs/examples/`](docs/examples) by the same run.
+
+**Sprites, variants, an anim and an atlas** ([`examples/basics.vx.js`](examples/basics.vx.js)): a slime
+from one `blob`, recolored by `swap`, hopping in an anim, everything packed into an atlas (with
+`--godot`, also a `SpriteFrames` for Godot).
+
+```js
+sprite("slime", { w: 32, h: 26, outline: "k" },
+  blob([16, 2, 24, 5, 29, 13, 30, 22, 16, 24, 2, 22, 3, 13, 8, 5], { fill: rad(["g", "G"], { cx: 0.4, cy: 0.3, r: 0.8 }) }),
+  sym(16,
+    ellipse(10, 18, 3, 1.5, { fill: "G", opacity: 0.6 }),           // cheek shade
+    circle(11, 12, 3, "w"), circle(11.6, 12.4, 1.6, "k")),          // eyes
+  circle(9, 7, 1.6, { fill: "w", opacity: 0.7 }))                   // shine (one side only)
+
+sprite("slime_red", { base: "slime", swap: { g: "r", G: "R" } })
+sprite("slime_blue", { base: "slime", swap: { g: "b", G: "B" } })
+
+anim("slime_hop", { w: 36, h: 42, frames: 8, fps: 10 },
+  (f) => ellipse(18, 39, 11 - Math.max(0, f.sin(3)), 2, { fill: "#1b163055" }),      // shadow
+  (f) => stamp("slime", 18, 38 - Math.max(0, f.sin(8)), { anchor: "bottom", scale: [1 + f.cos(0.08), 1 - f.cos(0.08)] }))
+
+scene("meadow", { w: 160, h: 90, bg: lin(["b", "w"], 90) },
+  circle(130, 20, 10, { fill: "y", glow: { r: 8, color: "y" } }),
+  blob([0, 62, 40, 54, 90, 60, 130, 52, 160, 58, 160, 90, 0, 90], { fill: "g", smooth: 0.6 }),
+  rect(0, 72, 160, 18, "G"),
+  scatter("slime*", 10, 66, 140, 10, 5, { anchor: "bottom", scale: [0.6, 0.9], flip: "x" }),
+  stamp("coin", 80, 40, { anchor: "center", scale: 0.8 }),
+  stamp("sword", 30, 40, { anchor: "center", rot: 35 }))
+
+sheet("items", ["slime*", "coin", "sword", "orb", "coin_spin"], { pad: 2, scale: 2 })
+```
+
+| `items` atlas, as built | `meadow` scene |
+|---|---|
+| ![items atlas](docs/examples/items.png) | ![meadow scene](docs/examples/meadow.png) |
+
+**Cel-shaded props in a scene** ([`examples/props.vx.js`](examples/props.vx.js)): tones clipped to the
+base shape, tiles, a weighted random group scattered along the ground.
+
+```js
+// Cel shading: base shape, then darker / lighter tones clipped to it.
+sprite("crate", { w: 28, h: 28, outline: "k", ow: 1.5 },
+  rect(0, 0, 28, 28, { fill: "wd2", r: 2 }),
+  clip(rect(0, 0, 28, 28, { fill: "k", r: 2 }),
+    poly([28, 0, 28, 28, 0, 28], { fill: dark("wd2"), opacity: 0.35 }),  // shadow half
+    rect(0, 0, 28, 3, lite("wd2"))),                                     // top light
+  rect(3, 3, 22, 22, { stroke: "wd0", sw: 1.5 }),
+  line([4, 24, 24, 4], { stroke: "wd1", sw: 4 }),
+  sym(14, circle(5, 5, 1, "wd0"), circle(5, 23, 1, "wd0")))
+```
+
+![yard scene](docs/examples/yard.png)
+
+**A comic page in ink** ([`examples/comic.vx.js`](examples/comic.vx.js)): `panels()` lays out the
+page and `panel()` clips each one; pressure ink (`pressure: "bend"`), screentone (`tone`, flat and
+fading), spot blacks (`spot`), radial and parallel `speedlines()`, balloons and captions lettered in
+a handwriting font. The face panel:
+
+```js
+const P = panels({ w: 600, h: 860, margin: 20, gutter: 12, rows: [1, [3, 2], 1], heights: [1.05, 1, 1] })
+
+// 2. Close-up: radial speed lines push in on the courier's face.
+const face = [
+  rect(0, 0, 329, 261, { fill: "w" }),
+  speedlines({ area: [0, 0, 329, 261], at: [164, 140], count: 110, w: 7, inner: 0.62, seed: 4 }),
+  blob([164, 40, 238, 88, 252, 180, 214, 262, 114, 262, 76, 180, 90, 88], { fill: "p", tone: { c: "k", gap: 4, dot: 0.5 }, ink: INK(5, { pressure: "bend" }), spot: { light: 300, depth: 0.22 } }),
+  ellipse(164, 160, 50, 60, { fill: "p", ink: INK(3.5, { pressure: "bend" }), spot: { light: 300, depth: 0.16 } }),
+  sym(164,
+    curve([128, 142, 142, 136, 156, 143], { ink: INK(5, { pressure: [0.2, 1, 0.5], taper: 0.1 }) }),           // brow, pulled down
+    curve([132, 156, 142, 152, 152, 157], { ink: INK(3, { pressure: [0.3, 1, 0.3] }) }),                         // lid
+    circle(143, 159, 3, "k")),
+  curve([168, 160, 172, 180, 164, 184], { ink: INK(2.5, { pressure: [0.2, 1, 0.6] }) }),                        // nose
+  curve([148, 200, 164, 197, 180, 201], { ink: INK(3, { pressure: [0.3, 1, 0.3] }) }),                          // mouth
+  caption(10, 214, 170, ["NINE MINUTES LEFT."]),
+]
+
+scene("comic_page", { w: 600, h: 860, bg: "p" },
+  panel(P[0], { ink: true }, city),
+  panel(P[1], { ink: true }, face),
+  panel(P[2], { ink: true }, parcel),
+  panel(P[3], { ink: true }, leap))
+```
+
+<img src="docs/examples/comic_page.png" width="600" alt="A comic page in black ink on warm paper: a night city with screentone sky and spot-black buildings, a close-up of a hooded courier against focus lines, a parcel flying with motion lines and WHOOSH, and a silhouette leaping between rooftops under a speech balloon">
+
 ## Features
 
 - **Shapes:** `rect circle ellipse poly blob curve line path star ngon arc text`. `blob` and
@@ -155,8 +243,10 @@ sheet("enemies", ["slime*", "slime_hop"], { scale: 2 })
   scenes; the silhouette outline follows the pixels); `text` along a curve.
 - **Generative:** `noise(x, y)`, `lsystem()` + `turtle()` (plants, fractals, coral, with branch depth
   for tapering strokes), `tween()` for shape morphing, and `radial()` symmetry (mandalas, snowflakes).
-- **Hand-drawn:** `ink` lines with weight, taper and wobble, painted `shade` from one light, `hatch`,
-  and line `boil` in anims.
+- **Hand-drawn:** `ink` lines with weight, taper, wobble and brush `pressure`, painted `shade` from one
+  light, `hatch`, and line `boil` in anims.
+- **Comics:** `panels()` page layouts and `panel()` frames, screentone (`tone`, flat or fading), spot
+  blacks (`spot`), focus and motion `speedlines()`, balloons and lettering.
 - **Structure:** `tf` transform groups, `sym` mirroring, `clip` for cel shading and highlights,
   automatic silhouette `outline`.
 - **Reuse:** parts, `base` + `swap` variants, `stamp`, `tile`, `scatter`, random groups and globs.
@@ -169,7 +259,8 @@ sheet("enemies", ["slime*", "slime_hop"], { scale: 2 })
 - **Animation:** `(f) => items` functions per frame (`f.t`, `f.sin`, `f.cos`, `f.rng`). Anims
   stamped inside anims follow their frames.
 - **Output:** SVG, PNG at any scale, animation strips, atlases + JSON for Phaser, PixiJS, Godot
-  and similar engines, agent-readable previews.
+  and similar engines (`--godot` adds a `SpriteFrames` `.tres` per strip and atlas), agent-readable
+  previews (`.gdignore`d).
 - **Errors** name `file:line:col` and the asset path, and suggest fixes. One broken asset never
   stops the others.
 
@@ -184,7 +275,7 @@ ln -s "$PWD" ~/.claude/skills/vex-vector-art
 ## Development
 
 ```bash
-npm run check   # typecheck + tests
+npm run check      # typecheck + tests + build every example (npm run examples: also refreshes docs/examples)
 ```
 
 ## License

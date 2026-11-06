@@ -4,7 +4,7 @@ import { VexError, didYouMean, wrap } from "./errors.ts";
 import { type Clip, type Rig, checkClip, isRig, makeRig, sample } from "./rig.ts";
 import { checkParticles, simulate } from "./vfx.ts";
 import { type LegendEntry, type LevelGrid, buildGrid, parseMap, platformer } from "./level.ts";
-import { type HatchOpts, type InkOpts, type ShadeOpts, HATCH_KEYS, INK_KEYS, SHADE_KEYS } from "./hand.ts";
+import { type HatchOpts, type InkOpts, type ShadeOpts, type SpeedOpts, type SpotOpts, type ToneOpts, HATCH_KEYS, INK_KEYS, SHADE_KEYS, SPOT_KEYS, TONE_KEYS, speedLinesD } from "./hand.ts";
 import { lsystem, noise2, turtle, tween } from "./gen.ts";
 import { arcD, points, polyD, smoothD, starD } from "./geom.ts";
 import {
@@ -225,14 +225,24 @@ export class Project {
           if (!isPlain(val)) throw new VexError("grain must be { freq, octaves, seed }");
           checkKeys("grain", val, ["freq", "octaves", "seed"]);
           style.grain = val as Style["grain"];
-        } else if (k === "ink" || k === "hatch") {
-          const keys = k === "ink" ? INK_KEYS : HATCH_KEYS;
+        } else if (k === "ink" || k === "hatch" || k === "tone") {
+          const keys = k === "ink" ? INK_KEYS : k === "hatch" ? HATCH_KEYS : TONE_KEYS;
           const o = typeof val === "string" ? { c: val } : val;
           if (!isPlain(o)) throw new VexError(`${k} must be a color or { ${keys.join(", ")} }`);
           checkKeys(k, o, keys);
           color(o.c, `${k} c`);
-          nums(k, o, keys.filter((x) => x !== "c" && x !== "cross"));
-          style[k] = o as unknown as InkOpts & HatchOpts;
+          nums(k, o, keys.filter((x) => x !== "c" && x !== "cross" && x !== "pressure"));
+          if (o.pressure !== undefined && o.pressure !== "bend" && !(Array.isArray(o.pressure) && o.pressure.length && o.pressure.every((x) => typeof x === "number" && Number.isFinite(x) && x >= 0)))
+            throw new VexError(`ink pressure must be a list of widths 0..1 along the line ([0.2, 1, 0.4]) or "bend"`);
+          if (k === "tone" && o.gap !== undefined && !((o.gap as number) >= 1)) throw new VexError("tone gap must be at least 1 unit");
+          style[k] = o as unknown as InkOpts & HatchOpts & ToneOpts;
+        } else if (k === "spot") {
+          const o = typeof val === "string" ? { c: val } : val === true ? {} : val;
+          if (!isPlain(o)) throw new VexError(`spot must be true, a color or { ${SPOT_KEYS.join(", ")} }`);
+          checkKeys("spot", o, SPOT_KEYS);
+          if (o.c !== undefined) color(o.c, "spot c");
+          nums("spot", o, ["light", "depth"]);
+          style.spot = o as SpotOpts;
         } else if (k === "shade") {
           const o = val === true ? {} : val;
           if (!isPlain(o)) throw new VexError(`shade must be true or { ${SHADE_KEYS.join(", ")} }`);
@@ -247,7 +257,8 @@ export class Project {
           style.blend = val as string;
         } else (style as Record<string, unknown>)[k] = val;
       }
-      if ((style.ink || style.shade || style.hatch) && style.grain) throw new VexError("grain can't be combined with ink, shade or hatch; put the grain on its own shape");
+      if ((style.ink || style.shade || style.hatch || style.tone || style.spot) && style.grain) throw new VexError("grain can't be combined with ink, shade, hatch, tone or spot; put the grain on its own shape");
+      if (style.spot && style.fill === undefined) throw new VexError("spot needs a fill (the black goes on its shadow side)");
       if (style.shade && style.fill === undefined) throw new VexError("shade needs a fill to shade");
       if (style.fill === undefined && style.stroke === undefined && !style.ink) {
         if (strokeDefault) throw new VexError(`style needs a stroke (or fill)`);
@@ -362,7 +373,7 @@ export class Project {
         const argc = spec.args.split(" ").length;
         const { style, ex } = styleArg(args[argc], spec.extra, !!spec.stroke);
         if (args.length > argc + 1) throw new VexError(`too many arguments; options go in the style object`);
-        if (name === "text" && (style.ink || style.shade || style.hatch)) throw new VexError("ink, shade and hatch work on shapes, not text");
+        if (name === "text" && (style.ink || style.shade || style.hatch || style.tone || style.spot)) throw new VexError("ink, shade, hatch, tone and spot work on shapes, not text");
         return { k: "shape", ...shapeGeom(name, args, ex), style, step: { label: `${name}(${fmtArgs(args.slice(0, argc))})`, loc } };
       });
     }
@@ -401,6 +412,61 @@ export class Project {
     env.clip = (mask: unknown, ...items: unknown[]): Ref => at("clip", (loc) => {
       if (!isNode(mask) && !Array.isArray(mask)) throw new VexError("clip(maskShape, ...items): the mask is a shape like circle(...) or a list of shapes");
       return { __ref: "clip", args: [mask, ...items], step: { label: "clip(…)", loc } };
+    });
+    // ---- comic pages: panel layout, panels, speed lines
+    const rectArg = (r: unknown, what: string): [number, number, number, number] => {
+      if (!Array.isArray(r) || r.length !== 4 || !r.every((v) => typeof v === "number" && Number.isFinite(v)) || r[2] <= 0 || r[3] <= 0)
+        throw new VexError(`${what} must be [x, y, w, h] with w and h > 0`);
+      return r as [number, number, number, number];
+    };
+    env.panels = (o: unknown) => at("panels", () => {
+      if (!isPlain(o) || !Array.isArray(o.rows) || !o.rows.length) throw new VexError("panels({ w, h, margin, gutter, rows: [1, 2, [2, 1]], heights }): returns [x, y, w, h] per panel, row by row");
+      checkKeys("panels", o, ["w", "h", "margin", "gutter", "rows", "heights"]);
+      nums("panels", o, ["w", "h", "margin", "gutter"]);
+      if (typeof o.w !== "number" || typeof o.h !== "number") throw new VexError("panels needs the page size: { w, h }");
+      const margin = (o.margin as number) ?? 0, gutter = (o.gutter as number) ?? 8;
+      const rows = (o.rows as unknown[]).map((r, i) => {
+        const ws = typeof r === "number" ? Array.from({ length: r }, () => 1) : r;
+        if (!Array.isArray(ws) || !ws.length || !ws.every((v) => typeof v === "number" && v > 0)) throw new VexError(`panels row ${i + 1} must be a panel count or a list of relative widths`);
+        return ws as number[];
+      });
+      const hs = (o.heights as unknown[] | undefined) ?? rows.map(() => 1);
+      if (!Array.isArray(hs) || hs.length !== rows.length || !hs.every((v) => typeof v === "number" && v > 0)) throw new VexError("panels heights must be one relative height per row");
+      const W = o.w - 2 * margin, H = o.h - 2 * margin - gutter * (rows.length - 1), hsum = (hs as number[]).reduce((a, b) => a + b, 0);
+      const out: [number, number, number, number][] = [];
+      let y = margin;
+      rows.forEach((ws, i) => {
+        const rh = (H * (hs[i] as number)) / hsum, avail = W - gutter * (ws.length - 1), wsum = ws.reduce((a, b) => a + b, 0);
+        let x = margin;
+        for (const wr of ws) { const pw = (avail * wr) / wsum; out.push([x, y, pw, rh]); x += pw + gutter; }
+        y += rh + gutter;
+      });
+      return out;
+    });
+    env.panel = (r: unknown, o: unknown, ...items: unknown[]): Ref => at("panel", () => {
+      const [x, y, w, h] = rectArg(r, "panel's first argument");
+      if (!isPlain(o)) throw new VexError("panel([x, y, w, h], { border, bw, bg, ink }, ...items): items in panel coordinates (0, 0 = its top-left), clipped to it");
+      checkKeys("panel", o, ["border", "bw", "bg", "ink"]);
+      nums("panel", o, ["bw"]);
+      const E = env as Record<string, (...a: unknown[]) => unknown>;
+      const border = (o.border as string | undefined) ?? (this.pal.has("k") ? "k" : "#000000"), bw = (o.bw as number | undefined) ?? 3;
+      const frame = border === "none" ? null : o.ink
+        ? E.rect(0, 0, w, h, { ink: { c: border, w: bw, wobble: bw * 0.25, ...(isPlain(o.ink) ? o.ink : {}) } })
+        : E.rect(0, 0, w, h, { stroke: border, sw: bw, join: "miter" });
+      return E.tf({ x, y }, E.clip(E.rect(0, 0, w, h, "#000000"), o.bg !== undefined ? E.rect(0, 0, w, h, paintArg(o.bg, "panel bg")) : null, ...items), frame) as Ref;
+    });
+    env.speedlines = (o: unknown) => at("speedlines", () => {
+      if (!isPlain(o)) throw new VexError("speedlines({ area: [x, y, w, h], at: [cx, cy] | angle, count, w, inner, length, c, seed })");
+      checkKeys("speedlines", o, ["area", "at", "angle", "count", "w", "inner", "length", "c", "seed", "opacity"]);
+      const area = rectArg(o.area, "speedlines area");
+      nums("speedlines", o, ["angle", "count", "w", "inner", "seed", "opacity"]);
+      if (o.at !== undefined && !(Array.isArray(o.at) && o.at.length === 2 && o.at.every((v) => typeof v === "number"))) throw new VexError("speedlines at must be [cx, cy]");
+      if ((o.at === undefined) === (o.angle === undefined)) throw new VexError("speedlines needs at: [cx, cy] (radial focus lines) or angle (parallel motion lines), not both");
+      if (o.length !== undefined && !(Array.isArray(o.length) && o.length.length === 2 && o.length.every((v) => typeof v === "number" && v > 0 && v <= 1))) throw new VexError("speedlines length must be [min, max], fractions 0..1 of the area");
+      const E = env as Record<string, (...a: unknown[]) => unknown>;
+      const c = o.c !== undefined ? color(o.c, "speedlines c") : this.pal.has("k") ? "k" : "#000000";
+      const d = speedLinesD(o as unknown as SpeedOpts);
+      return E.clip(E.rect(...area, "#000000"), E.path(d, { fill: c, ...(o.opacity !== undefined ? { opacity: o.opacity } : {}) })) as Ref;
     });
     env.rig = (spec: unknown) => at("rig", () => makeRig(spec));
     env.particles = (o: unknown) => at("particles", () => {

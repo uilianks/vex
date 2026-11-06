@@ -10,9 +10,10 @@ import { traceFile } from "./trace.ts";
 
 const USAGE = `vex — 2D vector game-asset DSL
 
-  vex build <art.vx.js> [--out DIR] [--only a,b] [--scales 1,2] [--no-preview] [--no-grid]
+  vex build <art.vx.js> [--out DIR] [--only a,b] [--scales 1,2] [--no-preview] [--no-grid] [--godot]
       Write SVG + PNG per asset (out/sprites, out/scenes, out/anims strips + JSON),
-      atlases + JSON for sheets, and previews (out/_preview, with coordinate rulers).
+      atlases + JSON for sheets, and previews (out/_preview, with coordinate rulers). --godot also
+      writes a Godot 4 SpriteFrames .tres beside every anim strip and sheet (one animation per tag).
   vex serve <art.vx.js> [--port 4322] [--out DIR | --no-out]
       Live viewer: rebuilds on save and replays each asset's drawing steps.
   vex svg   <art.vx.js> <name> [--frame N]
@@ -34,6 +35,7 @@ interface Args {
   out?: string | false;
   only?: string[];
   scales?: number[];
+  godot?: boolean;
   preview?: boolean;
   grid?: boolean;
   port?: number;
@@ -78,6 +80,7 @@ function parse(argv: string[]): Args {
     }
     else if (v === "--name") a.name = val();
     else if (v === "--no-preview") a.preview = false;
+    else if (v === "--godot") a.godot = true;
     else if (v === "--no-grid") a.grid = false;
     else if (v === "-h" || v === "--help") a.cmd = "help";
     else if (v.startsWith("--")) throw new VexError(`unknown flag ${v}\n\n${USAGE}`);
@@ -101,7 +104,7 @@ export async function main(argv: string[]): Promise<number> {
     switch (a.cmd) {
       case "build": {
         const p = loadProject(file);
-        const r = writeOutputs(p, outDir, { only: a.only, preview: a.preview, scales: a.scales, grid: a.grid });
+        const r = writeOutputs(p, outDir, { only: a.only, preview: a.preview, scales: a.scales, grid: a.grid, godot: a.godot });
         for (const l of r.lines) console.log(l);
         for (const e of r.errors) console.error("error: " + e.message);
         console.log(`-> ${outDir}${r.errors.length ? ` (${r.errors.length} error${r.errors.length > 1 ? "s" : ""})` : ""}`);

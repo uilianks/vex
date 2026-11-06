@@ -96,6 +96,7 @@ The last argument is the style: a color (fill; stroke for `line`, `curve`, `arc`
 | `glow` | `r` or `{ r, color, strength: 1..4 }`: soft halo (flames, magic, neon). |
 | `blur` | Gaussian blur radius (soft shadows, light). |
 | `ink`, `shade`, `hatch` | Hand-drawn look (below). |
+| `tone`, `spot` | Comic screentone and spot blacks (see Comics). |
 
 ### Hand-drawn look
 
@@ -117,6 +118,7 @@ curve([...], { ink: { c: "k", w: 4, taper: 0.35 } })   // ink alone draws a hand
 | `wobble` | Wobble amplitude in units (default `w * 0.4`; 0 = exact). The fill follows the same wobble. |
 | `light`, `weight` | Closed lines get up to `weight` (default 0.5) heavier on the side away from `light` (default: `shade.light`, else 315). |
 | `dry` | 0..1, dry-brush breaks in the line. |
+| `pressure` | Brush pressure along the line: widths (0..1 of `w`) spread evenly from start to end and interpolated (`[0.2, 1, 0.4]` swells in the middle and lifts off), or `"bend"`: heavier where the line turns (a brush slows into curves and flicks through straights). Multiplies `vary`, `taper` and `light`. |
 | `seed` | Another drawing of the same shape. |
 
 | `shade` (true or an object; needs a `fill`) | Meaning |
@@ -140,6 +142,48 @@ Hatching fills the shape, or only its shadow when the shape has `shade`. The ass
 includes the ink. Anims take `boil: N` to redraw every ink wobble each N frames (line boil).
 `grain` can't share a shape with these; a paper texture is a full-size `rect` with `grain`,
 `blend: "multiply"` and a low `opacity` over a `bg` color.
+
+## Comics
+
+The comic / ink kit: a page of panels, inked with pressure, toned with screentone dots, spot blacks
+on the shadow side, speed lines and lettering. It builds on the hand-drawn keys above.
+
+```js
+const P = panels({ w: 600, h: 860, margin: 20, gutter: 12, rows: [1, [3, 2], 1], heights: [1.05, 1, 1] })
+scene("page", { w: 600, h: 860, bg: "p" },
+  panel(P[0], { ink: true },                                   // items in panel coordinates, clipped
+    rect(0, 0, 560, 274, { fill: "p", tone: { c: "k", gap: 5, dot: 1, fade: 180 } }),      // gradient sky
+    rect(40, 120, 70, 160, { fill: "p", ink: { c: "k", w: 3, pressure: "bend" }, spot: { light: 90, depth: 0.4 } })),
+  panel(P[1], {}, speedlines({ area: [0, 0, 329, 261], at: [164, 140], count: 110, w: 7, inner: 0.6 })))
+```
+
+| Call | Meaning |
+|---|---|
+| `panels({ w, h, margin = 0, gutter = 8, rows, heights })` | A page layout: returns `[x, y, w, h]` for every panel, row by row. `rows`: per row a panel count (`2`) or relative widths (`[3, 2]`); `heights`: relative row heights (default equal). |
+| `panel([x, y, w, h], { border, bw = 3, bg, ink }, ...items)` | A panel: the items in panel coordinates (0, 0 = its top-left), clipped to it, on `bg`, under a border of width `bw` (`border` default `k` when the palette has it, else black; `"none"` for no border). `ink: true` (or ink options) hand-inks the border. |
+| `speedlines({ area, at \| angle, count = 60, w = 3, inner = 0.45, length, c, seed, opacity })` | Speed lines as tapered wedges clipped to `area` (`[x, y, w, h]`). `at: [cx, cy]`: radial focus lines converging on a point, with `inner` (0..1 of the distance to the nearest edge) kept clear. `angle`: parallel motion lines moving that way (degrees, 0 = right, 90 = down), wide at the head, thinning behind. `length`: `[min, max]` fractions of the area (radial default `[0.5, 1]`, parallel `[0.25, 0.7]`). |
+
+| `tone` (a color or an object) | Meaning |
+|---|---|
+| `c` | Dot color. |
+| `gap` | Distance between dot centres in units (default 4, at least 1). |
+| `dot` | Dot diameter as a fraction of the gap (default 0.55; above 1 the dots merge into a dark tone). |
+| `angle` | Screen angle in degrees (default 45). |
+| `opacity` | Default 1. |
+| `fade` | A gradient tone: the dots shrink to nothing toward this side (degrees, 0 = up, clockwise), full size on the opposite side. Drawn as geometry, so keep `gap` reasonable on big shapes. |
+
+Like `hatch`, a `tone` fills the shape, or only its shadow when the shape has `shade`.
+
+| `spot` (`true`, a color or an object; needs a `fill`) | Meaning |
+|---|---|
+| `c` | Spot color (default `k` when the palette has it, else black). |
+| `light` | Light direction (default `shade.light`, else 315). |
+| `depth` | How far the black reaches in from the far side, as a fraction of the shape's extent along the light (default 0.3). |
+
+Spot blacks are the inker's hard shadows: the far side filled solid with a crisp edge, drawn over the
+tone and under the ink. Lettering is `text` (a handwriting font such as Caveat, `anchor: "middle"`);
+a balloon is a `poly` or `blob` with ink whose points include the tail tip, so one line runs round
+both (see [`examples/comic.vx.js`](examples/comic.vx.js)).
 
 ## Structure
 
@@ -295,7 +339,7 @@ separately (cutout style). The skeleton origin is the bottom center of `w × h` 
 
 ## Output
 
-`vex build art.vx.js [--out DIR] [--only a,b] [--scales 1,2] [--no-preview] [--no-grid]`
+`vex build art.vx.js [--out DIR] [--only a,b] [--scales 1,2] [--no-preview] [--no-grid] [--godot]`
 
 | Path | Content |
 |---|---|
@@ -303,7 +347,8 @@ separately (cutout style). The skeleton origin is the bottom center of `w × h` 
 | `out/anims/<name>.png` + `.json` | Horizontal frame strip + TexturePacker/Aseprite-style JSON (durations, frame tag). |
 | `out/anims/<name>/<i>.svg` | One SVG per frame. |
 | `out/<sheet>.png` + `.json` | Atlas; anims expand to `name_0, name_1, ...` with a frame tag. |
-| `out/_preview/<name>.png` | Preview: checkerboard, grid, unit rulers; anims: all frames side by side. |
+| `out/_preview/<name>.png` | Preview: checkerboard, grid, unit rulers; anims: all frames side by side. The folder holds a `.gdignore`, so Godot does not import previews. |
+| `<strip or atlas>.tres` | With `--godot`: a Godot 4 `SpriteFrames` beside every anim strip and sheet atlas (at every scale), made from its JSON: one animation per frame tag (frames, durations, fps, looping) and a one-frame animation per still atlas entry. The texture path is relative to the `.tres`; build into the Godot project and assign it to an `AnimatedSprite2D`. |
 
 ## Tracing an image
 

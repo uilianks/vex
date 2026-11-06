@@ -1,6 +1,6 @@
 // The data an art file produces. Definitions are plain data + closures; nothing is resolved
 // until build time, so references between assets are order-independent.
-import type { HatchOpts, InkOpts, ShadeOpts } from "./hand.ts";
+import type { HatchOpts, InkOpts, ShadeOpts, SpotOpts, ToneOpts } from "./hand.ts";
 import type { Palette } from "./palette.ts";
 
 export interface Grad {
@@ -63,6 +63,10 @@ export interface Style {
   shade?: ShadeOpts;
   /** Line hatching inside the shape (only in the shadow when the shape is shaded). */
   hatch?: HatchOpts;
+  /** Screentone dots inside the shape (only in the shadow when the shape is shaded). */
+  tone?: ToneOpts;
+  /** Spot black: the shape's shadow side filled solid with a hard edge. */
+  spot?: SpotOpts;
 }
 
 export interface GrainOpts {
@@ -72,7 +76,7 @@ export interface GrainOpts {
   seed?: number;
 }
 
-export const STYLE_KEYS = ["fill", "stroke", "sw", "opacity", "cap", "join", "dash", "glow", "blur", "grain", "blend", "ink", "shade", "hatch"];
+export const STYLE_KEYS = ["fill", "stroke", "sw", "opacity", "cap", "join", "dash", "glow", "blur", "grain", "blend", "ink", "shade", "hatch", "tone", "spot"];
 
 /** A resolved, drawable element. */
 export type Node = ShapeNode | GroupNode | ClipNode;

@@ -12,6 +12,7 @@ import { writeFont } from "./font.ts";
 import { deflateSync } from "node:zlib";
 import { Resvg } from "@resvg/resvg-js";
 import { png as encodePng } from "../core/png.ts";
+import { spriteFramesTres } from "../core/godot.ts";
 
 /** Stretch a sprite with 9-slice margins (corners fixed, edges stretch one way, center both). */
 export function nineSlice(src: Uint8Array, W: number, H: number, m: number[], outW: number, outH: number): Uint8Array {
@@ -59,6 +60,8 @@ export interface OutputOptions {
   scales?: number[];
   /** Coordinate grid on previews (default true). */
   grid?: boolean;
+  /** Also write a Godot 4 SpriteFrames .tres beside every anim strip and sheet (at each scale). */
+  godot?: boolean;
 }
 
 export interface OutputResult {
@@ -129,6 +132,11 @@ export function writeOutputs(p: Project, out: string, opts: OutputOptions = {}):
       if (!p.assets.has(x) && !sheetNames.has(x) && !p.spines.some((sp) => sp.name === x) && !p.fonts.some((fd) => fd.name === x) && !p.levels.some((lv) => lv.name === x))
         errors.push(new VexError(`unknown asset or sheet '${x}'${didYouMean(x, [...p.order, ...sheetNames])}`));
   const want = opts.only ? new Set(opts.only) : undefined;
+  if (opts.preview !== false) write(join(out, "_preview", ".gdignore"), "");   // Godot skips the previews
+  const sheetOut = (base: string, json: string) => {
+    write(base + ".json", json);
+    if (opts.godot) write(base + ".tres", spriteFramesTres(json));
+  };
   const names = want ? p.order.filter((x) => want.has(x)) : p.exported();
 
   for (const name of names) {
@@ -161,7 +169,7 @@ export function writeOutputs(p: Project, out: string, opts: OutputOptions = {}):
         for (const m of scales) {
           const pk = pack(cells, b.scale * m, cells.length);
           write(join(dir, name + suffix(m) + ".png"), png(pk.svg));
-          write(join(dir, name + suffix(m) + ".json"), sheetJson(name + suffix(m) + ".png", pk, b.scale * m, [{ name, from: 0, to: cells.length - 1 }]));
+          sheetOut(join(dir, name + suffix(m)), sheetJson(name + suffix(m) + ".png", pk, b.scale * m, [{ name, from: 0, to: cells.length - 1 }]));
         }
         if (opts.preview !== false) {
           // All frames side by side, 1 unit gap, on one checkerboard.
@@ -205,7 +213,7 @@ export function writeOutputs(p: Project, out: string, opts: OutputOptions = {}):
       for (const m of scales) {
         const pk = pack(cells, base * m, s.opts.cols, s.opts.pad ?? 2);
         write(join(out, s.name + suffix(m) + ".png"), png(pk.svg));
-        write(join(out, s.name + suffix(m) + ".json"), sheetJson(s.name + suffix(m) + ".png", pk, base * m, tags));
+        sheetOut(join(out, s.name + suffix(m)), sheetJson(s.name + suffix(m) + ".png", pk, base * m, tags));
         if (m === scales[0]) lines.push(`sheet ${s.name} ${pk.w}x${pk.h} (${cells.length} frames)`);
       }
       if (opts.preview !== false) {

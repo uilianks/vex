@@ -2,7 +2,7 @@
 // through the whole build so swaps (variants, use(..., { swap })) compose, and resolve here.
 import { VexError } from "./errors.ts";
 import { type GlowOpts, type Grad, type Node, type Paint, type Pat, type ShapeNode, type Style, isGrad, isPat } from "./model.ts";
-import { bounds, inkD, lightDir, linesD, outline, shapeSeed, wobbled } from "./hand.ts";
+import { bounds, inkD, lightDir, linesD, outline, shapeSeed, toneFadeD, wobbled } from "./hand.ts";
 import type { Palette } from "./palette.ts";
 import { esc, n } from "./util.ts";
 
@@ -53,6 +53,11 @@ class Ctx {
     for (let i = this.swaps.length - 1; i >= 0; i--) k = this.swaps[i][k] ?? k;
     for (let i = this.pals.length - 1; i > 0; i--) if (this.pals[i].has(k)) return this.pals[i].resolve(k);
     return this.pals[0].resolve(k);
+  }
+
+  /** Whether a palette key is defined (in any active palette). */
+  has(k: string): boolean {
+    return this.pals.some((p) => p.colors.has(k));
   }
 
   /** The color `by` ramp steps from a key (after swaps), or undefined when it is in no ramp. */
@@ -191,21 +196,20 @@ function hand(ctx: Ctx, s: ShapeNode, sil?: Sil): string {
   const filled = !isNone(ctx, st.fill), stroked = !isNone(ctx, st.stroke);
 
   if (sil) {
-    let out = filled || stroked ? geom(styleAttrs(ctx, { ...st, ink: undefined, shade: undefined, hatch: undefined }, sil)) : "";
+    let out = filled || stroked ? geom(styleAttrs(ctx, { ...st, ink: undefined, shade: undefined, hatch: undefined, tone: undefined, spot: undefined }, sil)) : "";
     if (inkPath) out += `<path d="${inkPath}"${paint(ctx, "fill", sil.color)}${paint(ctx, "stroke", sil.color)} stroke-width="${n(2 * sil.ow)}" stroke-linejoin="round"/>`;
     return out;
   }
 
   let body = filled ? geom(paint(ctx, "fill", st.fill!)) : "";
   const b = bounds(polys), size = Math.max(b.w, b.h, 1);
-  if (sh || st.hatch) {
+  if (sh || st.hatch || st.tone || st.spot) {
     const clip = ctx.id();
     ctx.defs.push(`<clipPath id="${clip}">${geom("")}</clipPath>`);
     // everything here is clipped to the shape, so its box (+1 for antialiasing) bounds all the work
     const area = `x="${n(b.x - 1)}" y="${n(b.y - 1)}" width="${n(b.w + 2)}" height="${n(b.h + 2)}"`;
-    const L = lightDir(sh?.light ?? 315);
     /** Mask that keeps the shape's edge band on one side: a copy shifted by d covers the rest. */
-    const band = (d: number, soft: number): string => {
+    const band = (d: number, soft: number, L = lightDir(sh?.light ?? 315)): string => {
       const id = ctx.id(), dx = L[0] * d, dy = L[1] * d, m = 3 * soft + 1;
       // blur only the part of the copy that lands on the box once shifted
       const x0 = Math.max(b.x, b.x - dx) - m, x1 = Math.min(b.x + b.w, b.x + b.w - dx) + m;
@@ -234,6 +238,25 @@ function hand(ctx: Ctx, s: ShapeNode, sil?: Sil): string {
       ctx.defs.push(`<pattern id="${pid}" width="${n(gap)}" height="${n(gap)}" patternUnits="userSpaceOnUse" patternTransform="rotate(${n(90 + (h.angle ?? 45))})">` +
         `<rect x="0" y="0" width="${lineW}" height="${n(gap)}"${col}/>${cross}</pattern>`);
       inner += `<rect ${area} fill="url(#${pid})" opacity="${n(h.opacity ?? 0.5)}"${shadowMask ? ` mask="url(#${shadowMask})"` : ""}/>`;
+    }
+    if (st.tone) {
+      // screentone: a pattern of dots on the screen angle, or (fade) dots shrinking across the shape
+      const t = st.tone, gap = t.gap ?? 4, col = paint(ctx, "fill", t.c), op = ` opacity="${n(t.opacity ?? 1)}"`;
+      const mask = shadowMask ? ` mask="url(#${shadowMask})"` : "";
+      if (t.fade !== undefined) inner += `<path d="${toneFadeD(b, t)}"${col}${op}${mask}/>`;
+      else {
+        const pid = ctx.id();
+        ctx.defs.push(`<pattern id="${pid}" width="${n(gap)}" height="${n(gap)}" patternUnits="userSpaceOnUse" patternTransform="rotate(${n(t.angle ?? 45)})">` +
+          `<circle cx="${n(gap / 2)}" cy="${n(gap / 2)}" r="${n(((t.dot ?? 0.55) * gap) / 2)}"${col}/></pattern>`);
+        inner += `<rect ${area} fill="url(#${pid})"${op}${mask}/>`;
+      }
+    }
+    if (st.spot) {
+      // spot black: the far side filled solid, with a crisp edge (comic inking, not painted shading)
+      // depth is measured across the shape along the light, so tall and wide shapes read the same
+      const sp = st.spot, SL = lightDir(sp.light ?? sh?.light ?? 315), d = (sp.depth ?? 0.3) * (Math.abs(SL[0]) * b.w + Math.abs(SL[1]) * b.h);
+      const c = sp.c ?? (ctx.has("k") ? "k" : "#000000");
+      inner += `<rect ${area}${paint(ctx, "fill", c)} mask="url(#${band(d, 0.35, SL)})"/>`;
     }
     if (sh?.rim) inner += `<rect ${area}${paint(ctx, "fill", sh.rim)} mask="url(#${band(size * 0.05, size * 0.015)})"/>`;
     body += `<g clip-path="url(#${clip})">${inner}</g>`;
@@ -287,7 +310,7 @@ function image(ctx: Ctx, s: ShapeNode, attrs: string, sil?: Sil): string {
 }
 
 function shape(ctx: Ctx, s: ShapeNode, sil?: Sil): string {
-  if (s.style.ink || s.style.shade || s.style.hatch) return hand(ctx, s, sil);
+  if (s.style.ink || s.style.shade || s.style.hatch || s.style.tone || s.style.spot) return hand(ctx, s, sil);
   const attrs = Object.entries(s.attrs).map(([k, v]) => ` ${k}="${typeof v === "number" ? n(v) : esc(v)}"`).join("");
   if (s.tag === "image") return image(ctx, s, attrs, sil);
   if (sil && s.style.fill === undefined && s.style.stroke === undefined) return "";

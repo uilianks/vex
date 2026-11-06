@@ -70,6 +70,11 @@ sheet("items", ["slime*", "coin", "slime_hop"], { pad: 2, scale: 2 })
   whose weight follows the light; `shade: { light, rim, hi, brush }` paints a form shadow, highlight and
   brush texture from one light direction (shadow color from the fill's ramp); `hatch: "k"` hatches the
   shadow. `anim(..., { boil: 3 })` redraws the wobble every 3 frames.
+- **Comics / ink**: `panels({ w, h, margin, gutter, rows: [1, [3, 2]] })` lays out a page and
+  `panel(rect, { ink: true }, ...items)` clips each one (items in panel coordinates); `tone: { c, gap,
+  dot, fade }` screentone dots (only in the shadow with `shade`); `spot: { light, depth }` spot blacks;
+  `ink: { pressure: "bend" | [0.2, 1, 0.4] }` brush pressure; `speedlines({ area, at | angle })`.
+  Lettering is `text` with a handwriting font. Full kit in reference.md (Comics).
 - **Shapes**: `rect circle ellipse poly blob line curve path star ngon arc text`. `blob`/`curve`
   pass smoothly through their points (`smooth: 0..1`); `path` takes raw SVG path data.
 - **Structure**: `tf({ x, y, rot, scale, flip, origin, opacity, glow, blur }, ...items)` groups;
@@ -129,4 +134,9 @@ Full API with every option: [reference.md](reference.md).
 - Organic shapes: `blob` with 6–10 points beats hand-written Béziers. Hard-edged things (crates,
   swords, UI): `poly`, `rect` with `r`.
 - Keep a consistent unit size per set (e.g. characters 32 high) so assets scale together.
+- Comic pages: keep it black and white plus one paper color; spot blacks and tone carry the values,
+  tone the midtones, spot the deepest shadows, all from one light. Thick pressure ink on silhouettes,
+  fine lines inside; focus lines on the panel's subject, motion lines trailing behind what moves.
 - Build with `--only` while iterating; a full build also writes every preview.
+- For a Godot game, build into the project with `--godot`: every anim strip and atlas gets a
+  `SpriteFrames` `.tres` for an `AnimatedSprite2D`; previews are `.gdignore`d.
