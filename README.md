@@ -282,3 +282,7 @@ npm run check      # typecheck + tests + build every example (npm run examples: 
 
 [MIT](LICENSE). Portions adapted from [claude-pxl](https://github.com/crsolver/claude-pxl)
 (MIT, © crsolver).
+
+## Support
+
+If this tool helps you, you can support its development on [Ko-fi](https://ko-fi.com/uiliankidricki).
